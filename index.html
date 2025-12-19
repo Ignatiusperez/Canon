@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Canon Pool</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background-color: #1a1a1a;
+            font-family: 'Arial', sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        h1 {
+            color: #ffffff;
+            font-size: 3rem;
+            margin-bottom: 20px;
+            text-shadow: 2px 2px 4px #000000;
+        }
+
+        #gameCanvas {
+            border: 10px solid #8B4513;
+            border-radius: 10px;
+            background-color: #2d5016;
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+        }
+
+        .game-info {
+            color: #ffffff;
+            margin-top: 20px;
+            text-align: center;
+        }
+
+        #score {
+            font-size: 1.5rem;
+            margin-bottom: 10px;
+        }
+
+        #instructions {
+            font-size: 1rem;
+            color: #cccccc;
+            max-width: 800px;
+        }
+    </style>
+</head>
+<body>
+    <h1>🎱 Canon Pool</h1>
+    <canvas id="gameCanvas" width="800" height="400"></canvas>
+    
+    <div class="game-info">
+        <div id="score">Score: 0</div>
+        <div id="instructions">
+            Click and drag the cue stick to aim and adjust power. Release to shoot!
+            <br>Sink all balls and finish with the black 8-ball to win!
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        let score = 0;
+        let isShooting = false;
+        let mouse = { x: 0, y: 0 };
+        let power = 0;
+        let isDragging = false;
+
+        // Game constants
+        const BALL_RADIUS = 10;
+        const POCKET_RADIUS = 15;
+        const FRICTION = 0.995;
+        const POWER_MULTIPLIER = 0.05;
+        const TABLE_BOUNDS = { x1: 50, y1: 50, x2: 750, y2: 350 };
+
+        // Pocket positions (6 pockets)
+        const POCKETS = [
+            { x: 50, y: 50 },
+            { x: 400, y: 50 },
+            { x: 750, y: 50 },
+            { x: 50, y: 350 },
+            { x: 400, y: 350 },
+            { x: 750, y: 350 }
+        ];
+
+        // Ball class with physics
+        class Ball {
+            constructor(x, y, color, isCueBall = false, isStriped = false, isEightBall = false) {
+                this.x = x;
+                this.y = y;
+                this.vx = 0;
+                this.vy = 0;
+                this.radius = BALL_RADIUS;
+                this.color = color;
+                this.isCueBall = isCueBall;
+                this.isStriped = isStriped;
+                this.isEightBall = isEightBall;
+                this.mass = 1;
+            }
+
+            update() {
+                // Apply friction
+                this.vx *= FRICTION;
+                this.vy *= FRICTION;
+
+                // Update position
+                this.x += this.vx;
+                this.y += this.vy;
+
+                // Wall collision detection
+                if (this.x - this.radius < TABLE_BOUNDS.x1) {
+                    this.x = TABLE_BOUNDS.x1 + this.radius;
+                    this.vx *= -1;
+                }
+                if (this.x + this.radius > TABLE_BOUNDS.x2) {
+                    this.x = TABLE_BOUNDS.x2 - this.radius;
+                    this.vx *= -1;
+                }
+                if (this.y - this.radius < TABLE_BOUNDS.y1) {
+                    this.y = TABLE_BOUNDS.y1 + this.radius;
+                    this.vy *= -1;
+                }
+                if (this.y + this.radius > TABLE_BOUNDS.y2) {
+                    this.y = TABLE_BOUNDS.y2 - this.radius;
+                    this.vy *= -1;
+                }
+
+                // Pocket collision detection
+                for (let pocket of POCKETS) {
+                    const dx = this.x - pocket.x;
+                    const dy = this.y - pocket.y;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+
+                    if (distance < POCKET_RADIUS) {
+                        // Remove ball from game
+                        const index = balls.indexOf(this);
+                        if (index > -1) {
+                            balls.splice(index, 1);
+                            score += 10;
+                            document.getElementById('score').textContent = `Score: \({score}`;
+
+                            // Check if 8-ball was sunk
+                            if (this.isEightBall) {
+                                alert(`🎱 Game Over! You sank the 8-ball!\nFinal Score: \){score}`);
+                                resetGame();
+                            }
+                        }
+                    }
+                }
+            }
+
+            draw() {
+                // Draw main ball
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fillStyle = this.color;
+                ctx.fill();
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+
+                // Draw stripe for striped balls
+                if (this.isStriped) {
+                    ctx.beginPath();
+                    ctx.ellipse(this.x, this.y, this.radius, this.radius / 2, 0, 0, Math.PI * 2);
+                    ctx.fillStyle = '#ffffff';
+                    ctx.fill();
+                }
+
+                // Draw number on 8-ball
+                if (this.isEightBall) {
+                    ctx.font = 'bold 12px Arial';
+                    ctx.fillStyle = '#ffffff';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText('8', this.x, this.y);
+                }
+            }
+        }
+
+        // Cue stick class
+        class Cue {
+            constructor(cueBall) {
+                this.cueBall = cueBall;
+                this.angle = 0;
+            }
+
+            update() {
+                if (!isShooting && balls.some(ball => ball.isCueBall)) {
+                    const dx = mouse.x - this.cueBall.x;
+                    const dy = mouse.y - this.cueBall.y;
+                    this.angle = Math.atan2(dy, dx);
+                }
+            }
+
+            draw() {
+                if (!isShooting && balls.some(ball => ball.isCueBall)) {
+                    ctx.save();
+                    ctx.translate(this.cueBall.x, this.cueBall.y);
+                    ctx.rotate(this.angle);
+                    
+                    // Draw cue stick
+                    ctx.beginPath();
+                    ctx.moveTo(0, 0);
+                    ctx.lineTo(-(50 + power), 0);
+                    ctx.strokeStyle = '#8B4513';
+                    ctx.lineWidth = 4;
+                    ctx.stroke();
+                    
+                    // Draw cue tip
+                    ctx.beginPath();
+                    ctx.arc(-(50 + power), 0, 3, 0, Math.PI * 2);
+                    ctx.fillStyle = '#ffffff';
+                    ctx.fill();
+                    ctx.restore();
+                }
+            }
+
+            shoot() {
+                const dx = mouse.x - this.cueBall.x;
+                const dy = mouse.y - this.cueBall.y;
+                this.cueBall.vx = dx * POWER_MULTIPLIER;
+                this.cueBall.vy = dy * POWER_MULTIPLIER;
+                isShooting = true;
+                power = 0;
+            }
+        }
+
+        // Initialize balls
+        let balls = [];
+        let cue;
+
+        function initBalls() {
+            // Cue ball
+            balls.push(new Ball(200, 200, '#ffffff', true));
+
+            // Solids (1-7)
+            balls.push(new Ball(600, 200, '#FFFF00')); // 1 - Yellow
+            balls.push(new Ball(580, 190, '#0000FF')); // 2 - Blue
+            balls.push(new Ball(580, 210, '#FF0000')); // 3 - Red
+            balls.push(new Ball(560, 180, '#800080')); // 4 - Purple
+            balls.push(new Ball(560, 200, '#FFA500')); // 5 - Orange
+            balls.push(new Ball(560, 220, '#008000')); // 6 - Green
+            balls.push(new Ball(540, 170, '#800000')); // 7 - Maroon
+
+            // 8 Ball
+            balls.push(new Ball(540, 190, '#000000', false, false, true));
+
+            // Stripes (9-15)
+            balls.push(new Ball(540, 210, '#FFFF00', false, true)); // 9 - Yellow Stripe
+            balls.push(new Ball(540, 230, '#0000FF', false, true)); // 10 - Blue Stripe
+            balls.push(new Ball(520, 160, '#FF0000', false, true)); // 11 - Red Stripe
+            balls.push(new Ball(520, 180, '#800080', false, true)); // 12 - Purple Stripe
+            balls.push(new Ball(520, 200, '#FFA500', false, true)); // 13 - Orange Stripe
+            balls.push(new Ball(520, 220, '#008000', false, true)); // 14 - Green Stripe
+            balls.push(new Ball(520, 240, '#800000', false, true)); // 15 - Maroon Stripe
+
+            cue = new Cue(balls[0]);
+        }
+
+        // Ball collision detection and resolution
+        function checkBallCollisions() {
+            for (let i = 0; i < balls.length; i++) {
+                for (let j = i + 1; j < balls.length; j++) {
+                    const ball1 = balls[i];
+                    const ball2 = balls[j];
+
+                    const dx = ball2.x - ball1.x;
+                    const dy = ball2.y - ball1.y;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+
+                    if (distance < ball1.radius + ball2.radius) {
+                        // Calculate collision angle
+                        const angle = Math.atan2(dy, dx);
+                        
+                        // Get velocity components
+                        const v1 = { x: ball1.vx, y: ball1.vy };
+                        const v2 = { x: ball2.vx, y: ball2.vy };
+
+                        // Rotate velocity vectors
+                        const rv1 = rotate(v1, -angle);
+                        const rv2 = rotate(v2, -angle);
+
+                        // Conservation of momentum
+                        const finalRV1 = { x: rv2.x, y: rv1.y };
+                        const finalRV2 = { x: rv1.x, y: rv2.y };
+
+                        // Rotate back to original coordinate system
+                        const finalV1 = rotate(finalRV1, angle);
+                        const finalV2 = rotate(finalRV2, angle);
+
+                        // Update velocities
+                        ball1.vx = finalV1.x;
+                        ball1.vy = finalV1.y;
+                        ball2.vx = finalV2.x;
+                        ball2.vy = finalV2.y;
+
+                        // Separate overlapping balls
+                        const overlap = (ball1.radius + ball2.radius) - distance;
+                        ball1.x -= overlap * Math.cos(angle) / 2;
+                        ball1.y -= overlap * Math.sin(angle) / 2;
+                        ball2.x += overlap * Math.cos(angle) / 2;
+                        ball2.y += overlap * Math.sin(angle) / 2;
+                    }
+                }
+            }
+        }
+
+        // Helper function to rotate vectors
+        function rotate(vector, angle) {
+            return {
+                x: vector.x * Math.cos(angle) - vector.y * Math.sin(angle),
+                y: vector.x * Math.sin(angle) + vector.y * Math.cos(angle)
+            };
+        }
+
+        // Check if all balls have stopped moving
+        function checkIfStopped() {
+            let allStopped = true;
+            for (let ball of balls) {
+                if (Math.abs(ball.vx) > 0.1 || Math.abs(ball.vy) > 0.1) {
+                    allStopped = false;
+                    break;
+                }
+            }
+            if (allStopped) isShooting = false;
+        }
+
+        // Game animation loop
+        function animate() {
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw table playing surface
+            ctx.fillStyle = '#2d5016';
+            ctx.fillRect(TABLE_BOUNDS.x1, TABLE_BOUNDS.y1, TABLE_BOUNDS.x2 - TABLE_BOUNDS.x1, TABLE_BOUNDS.y2 - TABLE_BOUNDS.y1);
+
+            // Draw pockets
+            ctx.fillStyle = '#000000';
+            for (let pocket of POCKETS) {
+                ctx.beginPath();
+                ctx.arc(pocket.x, pocket.y, POCKET_RADIUS, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // Update and draw all balls
+            for (let ball of balls) {
+                ball.update();
+                ball.draw();
+            }
+
+            // Check ball collisions
+            checkBallCollisions();
+
+            // Check if balls have stopped
+            checkIfStopped();
+
+            // Update and draw cue stick
+            cue.update();
+            cue.draw();
+
+            requestAnimationFrame(animate);
+        }
+
+        // Reset game function
+        function resetGame() {
+            score = 0;
+            document.getElementById('score').textContent = `Score: ${score}`;
+            balls = [];
+            initBalls();
+            isShooting = false;
+        }
+
+        // Mouse event listeners
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            mouse.x = e.clientX - rect.left;
+            mouse.y = e.clientY - rect.top;
+
+            if (isDragging && !isShooting) {
+                const dx = mouse.x - cue.cueBall.x;
+                const dy = mouse.y - cue.cueBall.y;
+                power = Math.min(Math.sqrt(dx * dx + dy * dy), 100);
+            }
+        });
+
+        canvas.addEventListener('mousedown', () => {
+            if (!isShooting) isDragging = true;
+        });
+
+        canvas.addEventListener('mouseup', () => {
+            if (isDragging && !isShooting) {
+                cue.shoot();
+            }
+            isDragging = false;
+        });
+
+        // Start the game
+        initBalls();
+        animate();
+    </script>
+</body>
+</html>
